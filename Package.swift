@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "ExpireFiles",
     platforms: [
-        .macOS(.v12)
+        .macOS("11.0")
     ],
     products: [
         .executable(

@@ -1,6 +1,276 @@
 import Foundation
 import Cocoa
 
+// MARK: - Menu Bar App
+class MenuBarApp: NSObject {
+    private var statusItem: NSStatusItem?
+    private var popover: NSPopover?
+    private var appState: AppState?
+    
+    override init() {
+        super.init()
+        setupAppState()
+        setupMenuBar()
+    }
+    
+    private func setupMenuBar() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        
+        if let button = statusItem?.button {
+            button.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "Expire Files")
+            button.action = #selector(togglePopover)
+            button.target = self
+        }
+        
+        setupPopover()
+    }
+    
+    private func setupPopover() {
+        print("Setting up popover")
+        popover = NSPopover()
+        let viewController = MenuBarViewController()
+        popover?.contentViewController = viewController
+        popover?.behavior = .transient
+        print("Popover setup complete")
+    }
+    
+    private func setupAppState() {
+        appState = AppState()
+        // Update the popover's view controller with the app state
+        if let viewController = popover?.contentViewController as? MenuBarViewController {
+            viewController.setAppState(appState!)
+        }
+    }
+    
+    @objc private func togglePopover() {
+        print("Toggle popover called")
+        if let popover = popover {
+            print("Popover exists, isShown: \(popover.isShown)")
+            if popover.isShown {
+                popover.performClose(nil)
+            } else {
+                // Update the view controller with current app state before showing
+                if let viewController = popover.contentViewController as? MenuBarViewController,
+                   let appState = appState {
+                    print("Updating view controller with app state")
+                    viewController.setAppState(appState)
+                }
+                
+                if let button = statusItem?.button {
+                    print("Showing popover")
+                    popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+                } else {
+                    print("No button found")
+                }
+            }
+        } else {
+            print("No popover found")
+        }
+    }
+}
+
+// MARK: - App State
+class AppState: ObservableObject {
+    @Published var watchedFolders: [WatchedFolder] = []
+    @Published var expiringFiles: [ExpiringFile] = []
+    
+    private var fileMonitors: [URL: FileMonitor] = [:]
+    private var expirationChecker: ExpirationChecker?
+    private let settingsManager = SettingsManager()
+    
+    init() {
+        print("AppState init called")
+        loadSettings()
+        print("Loaded \(watchedFolders.count) watched folders")
+        // Add Downloads folder by default if no folders are being watched
+        if watchedFolders.isEmpty {
+            print("Adding Downloads folder by default")
+            let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+            addWatchedFolder(downloadsURL)
+        }
+        startMonitoring()
+        print("AppState init complete")
+    }
+    
+    private func loadSettings() {
+        watchedFolders = settingsManager.loadWatchedFolders()
+    }
+    
+    private func saveSettings() {
+        settingsManager.saveWatchedFolders(watchedFolders)
+    }
+    
+    func startMonitoring() {
+        // Start monitoring all watched folders
+        for folder in watchedFolders {
+            startMonitoringFolder(folder.url)
+        }
+        
+        // Start expiration checking
+        expirationChecker = ExpirationChecker { [weak self] expiringFiles in
+            DispatchQueue.main.async {
+                self?.expiringFiles = expiringFiles
+            }
+        }
+        expirationChecker?.startPeriodicChecking()
+    }
+    
+    func stopMonitoring() {
+        // Stop all file monitors
+        for monitor in fileMonitors.values {
+            monitor.stopMonitoring()
+        }
+        fileMonitors.removeAll()
+        
+        // Stop expiration checking
+        expirationChecker?.stopPeriodicChecking()
+        expirationChecker = nil
+    }
+    
+    func addWatchedFolder(_ url: URL) {
+        let folder = WatchedFolder(url: url, name: url.lastPathComponent)
+        watchedFolders.append(folder)
+        startMonitoringFolder(url)
+        saveSettings()
+    }
+    
+    func removeWatchedFolder(_ url: URL) {
+        watchedFolders.removeAll { $0.url == url }
+        stopMonitoringFolder(url)
+        saveSettings()
+    }
+    
+    private func startMonitoringFolder(_ url: URL) {
+        let monitor = FileMonitor(folderURL: url) { [weak self] newFiles in
+            DispatchQueue.main.async {
+                self?.handleNewFiles(newFiles, in: url)
+            }
+        }
+        monitor.startMonitoring()
+        fileMonitors[url] = monitor
+    }
+    
+    private func stopMonitoringFolder(_ url: URL) {
+        fileMonitors[url]?.stopMonitoring()
+        fileMonitors.removeValue(forKey: url)
+    }
+    
+    private func handleNewFiles(_ files: [URL], in folderURL: URL) {
+        for fileURL in files {
+            if !MetadataManager.shared.hasExpirationDate(for: fileURL) {
+                showNewFileNotification(for: fileURL)
+            }
+        }
+    }
+    
+    private func showNewFileNotification(for fileURL: URL) {
+        sendNotification(title: "New File Detected", body: "A new file '\(fileURL.lastPathComponent)' was detected. Set an expiration date?")
+    }
+    
+    private func sendNotification(title: String, body: String) {
+        // Use osascript for reliable notifications
+        let script = """
+        display notification "\(body)" with title "\(title)"
+        """
+        
+        let task = Process()
+        task.launchPath = "/usr/bin/osascript"
+        task.arguments = ["-e", script]
+        task.launch()
+    }
+    
+    func getTopExpiringFiles(for folderURL: URL, limit: Int = 5) -> [ExpiringFile] {
+        return expiringFiles
+            .filter { $0.folderURL == folderURL }
+            .sorted { $0.expirationDate < $1.expirationDate }
+            .prefix(limit)
+            .map { $0 }
+    }
+    
+    func getAllFilesInFolder(_ folderURL: URL) -> [URL] {
+        do {
+            let fileURLs = try FileManager.default.contentsOfDirectory(
+                at: folderURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+            return fileURLs.filter { url in
+                let resourceValues = try? url.resourceValues(forKeys: [.isRegularFileKey])
+                return resourceValues?.isRegularFile == true
+            }
+        } catch {
+            print("Error reading folder \(folderURL.path): \(error)")
+            return []
+        }
+    }
+}
+
+// MARK: - Data Models
+struct WatchedFolder: Identifiable, Codable {
+    let id = UUID()
+    let url: URL
+    let name: String
+    
+    enum CodingKeys: String, CodingKey {
+        case url, name
+    }
+    
+    init(url: URL, name: String) {
+        self.url = url
+        self.name = name
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        url = try container.decode(URL.self, forKey: .url)
+        name = try container.decode(String.self, forKey: .name)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(url, forKey: .url)
+        try container.encode(name, forKey: .name)
+    }
+}
+
+struct ExpiringFile: Identifiable {
+    let id = UUID()
+    let fileURL: URL
+    let folderURL: URL
+    let expirationDate: Date
+    let fileName: String
+    
+    var timeUntilExpiration: TimeInterval {
+        expirationDate.timeIntervalSinceNow
+    }
+    
+    var isExpired: Bool {
+        timeUntilExpiration <= 0
+    }
+    
+    var isExpiringSoon: Bool {
+        timeUntilExpiration <= 3600 // 1 hour
+    }
+    
+    var timeRemainingString: String {
+        let timeInterval = timeUntilExpiration
+        
+        if timeInterval <= 0 {
+            return "Expired"
+        } else if timeInterval < 3600 {
+            let minutes = Int(timeInterval / 60)
+            return "\(minutes)m remaining"
+        } else if timeInterval < 86400 {
+            let hours = Int(timeInterval / 3600)
+            let minutes = Int((timeInterval.truncatingRemainder(dividingBy: 3600)) / 60)
+            return "\(hours)h \(minutes)m remaining"
+        } else {
+            let days = Int(timeInterval / 86400)
+            return "\(days) days remaining"
+        }
+    }
+}
+
 // MARK: - Metadata Manager
 class MetadataManager {
     static let shared = MetadataManager()
@@ -45,361 +315,16 @@ class MetadataManager {
     func hasExpirationDate(for fileURL: URL) -> Bool {
         return getExpirationDate(for: fileURL) != nil
     }
-    
-    func getFilesWithExpirationDates() -> [(URL, Date)] {
-        let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-        
-        do {
-            let fileURLs = try FileManager.default.contentsOfDirectory(at: downloadsURL, includingPropertiesForKeys: [.isRegularFileKey], options: [])
-            
-            return fileURLs.compactMap { fileURL in
-                guard let expirationDate = getExpirationDate(for: fileURL) else { return nil }
-                return (fileURL, expirationDate)
-            }
-        } catch {
-            print("Error reading Downloads directory: \(error)")
-            return []
-        }
-    }
-    
-    func getExpiringFiles(withinDays days: Int) -> [(URL, Date)] {
-        let now = Date()
-        let thresholdDate = Calendar.current.date(byAdding: .day, value: days, to: now)!
-        
-        return getFilesWithExpirationDates().filter { (_, expirationDate) in
-            expirationDate <= thresholdDate
-        }
-    }
-}
-
-// MARK: - File Monitor
-class FileMonitor {
-    private var fileSystemSource: DispatchSourceFileSystemObject?
-    private let downloadsURL: URL
-    private let metadataManager = MetadataManager.shared
-    
-    init() {
-        self.downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-    }
-    
-    func startMonitoring() {
-        let fileDescriptor = open(downloadsURL.path, O_EVTONLY)
-        guard fileDescriptor != -1 else {
-            print("Failed to open Downloads directory for monitoring")
-            return
-        }
-        
-        fileSystemSource = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fileDescriptor,
-            eventMask: [.write, .delete, .rename],
-            queue: DispatchQueue.global(qos: .background)
-        )
-        
-        fileSystemSource?.setEventHandler { [weak self] in
-            self?.handleFileSystemEvent()
-        }
-        
-        fileSystemSource?.setCancelHandler {
-            close(fileDescriptor)
-        }
-        
-        fileSystemSource?.resume()
-        print("Started monitoring Downloads directory: \(downloadsURL.path)")
-    }
-    
-    func stopMonitoring() {
-        fileSystemSource?.cancel()
-        fileSystemSource = nil
-        print("Stopped monitoring Downloads directory")
-    }
-    
-    private func handleFileSystemEvent() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.processNewFiles()
-        }
-    }
-    
-    private func processNewFiles() {
-        do {
-            let fileURLs = try FileManager.default.contentsOfDirectory(
-                at: downloadsURL,
-                includingPropertiesForKeys: [.isRegularFileKey, .creationDateKey],
-                options: [.skipsHiddenFiles]
-            )
-            
-            let fiveMinutesAgo = Date().addingTimeInterval(-300)
-            
-            for fileURL in fileURLs {
-                let resourceValues = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .creationDateKey])
-                
-                guard resourceValues.isRegularFile == true,
-                      let creationDate = resourceValues.creationDate,
-                      creationDate > fiveMinutesAgo,
-                      !metadataManager.hasExpirationDate(for: fileURL) else {
-                    continue
-                }
-                
-                promptForExpirationDate(for: fileURL)
-            }
-        } catch {
-            print("Error processing new files: \(error)")
-        }
-    }
-    
-    private func promptForExpirationDate(for fileURL: URL) {
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "New File Detected"
-            alert.informativeText = "A new file '\(fileURL.lastPathComponent)' was downloaded. Would you like to set an expiration date?"
-            alert.addButton(withTitle: "Set Expiration")
-            alert.addButton(withTitle: "Skip")
-            
-            let response = alert.runModal()
-            
-            if response.rawValue == 1000 {
-                self.showExpirationDatePicker(for: fileURL)
-            }
-        }
-    }
-    
-    private func showExpirationDatePicker(for fileURL: URL) {
-        let alert = NSAlert()
-        alert.messageText = "Set Expiration Date"
-        alert.informativeText = "When should '\(fileURL.lastPathComponent)' expire?"
-        alert.addButton(withTitle: "1 Day")
-        alert.addButton(withTitle: "1 Week")
-        alert.addButton(withTitle: "1 Month")
-        alert.addButton(withTitle: "Custom")
-        alert.addButton(withTitle: "Cancel")
-        
-        let response = alert.runModal()
-        
-        let expirationDate: Date?
-        switch response.rawValue {
-        case 1000: // First button
-            expirationDate = Calendar.current.date(byAdding: .day, value: 1, to: Date())
-        case 1001: // Second button
-            expirationDate = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: Date())
-        case 1002: // Third button
-            expirationDate = Calendar.current.date(byAdding: .month, value: 1, to: Date())
-        case 1003: // Fourth button
-            expirationDate = showCustomDatePicker()
-        default:
-            expirationDate = nil
-        }
-        
-        if let expirationDate = expirationDate {
-            let success = metadataManager.setExpirationDate(for: fileURL, expirationDate: expirationDate)
-            if success {
-                print("Set expiration date for \(fileURL.lastPathComponent): \(expirationDate)")
-            } else {
-                print("Failed to set expiration date for \(fileURL.lastPathComponent)")
-            }
-        }
-    }
-    
-    private func showCustomDatePicker() -> Date? {
-        let datePicker = NSDatePicker()
-        datePicker.datePickerStyle = .textFieldAndStepper
-        datePicker.datePickerMode = .single
-        datePicker.dateValue = Date().addingTimeInterval(86400)
-        
-        let alert = NSAlert()
-        alert.messageText = "Custom Expiration Date"
-        alert.informativeText = "Select the expiration date:"
-        alert.accessoryView = datePicker
-        alert.addButton(withTitle: "Set")
-        alert.addButton(withTitle: "Cancel")
-        
-        let response = alert.runModal()
-        return response.rawValue == 1000 ? datePicker.dateValue : nil
-    }
-}
-
-// MARK: - Expiration Checker
-class ExpirationChecker {
-    private var timer: Timer?
-    private let metadataManager = MetadataManager.shared
-    private let checkInterval: TimeInterval = 3600
-    
-    func startPeriodicChecking() {
-        checkForExpiringFiles()
-        
-        timer = Timer.scheduledTimer(withTimeInterval: checkInterval, repeats: true) { [weak self] _ in
-            self?.checkForExpiringFiles()
-        }
-        
-        print("Started periodic expiration checking (every \(checkInterval/3600) hours)")
-    }
-    
-    func stopPeriodicChecking() {
-        timer?.invalidate()
-        timer = nil
-        print("Stopped periodic expiration checking")
-    }
-    
-    private func checkForExpiringFiles() {
-        let expiringFiles = metadataManager.getExpiringFiles(withinDays: 1)
-        
-        for (fileURL, expirationDate) in expiringFiles {
-            let timeUntilExpiration = expirationDate.timeIntervalSinceNow
-            
-            if timeUntilExpiration <= 0 {
-                handleExpiredFile(fileURL: fileURL, expirationDate: expirationDate)
-            } else if timeUntilExpiration <= 3600 {
-                handleFileAboutToExpire(fileURL: fileURL, expirationDate: expirationDate)
-            }
-        }
-    }
-    
-    private func handleExpiredFile(fileURL: URL, expirationDate: Date) {
-        // Use NSUserNotification instead of UNUserNotificationCenter
-        sendSystemNotification(
-            title: "File Expired",
-            body: "'\(fileURL.lastPathComponent)' has expired and should be deleted.",
-            fileURL: fileURL
-        )
-        
-        DispatchQueue.main.async {
-            self.showExpiredFileDialog(fileURL: fileURL, expirationDate: expirationDate)
-        }
-    }
-    
-    private func handleFileAboutToExpire(fileURL: URL, expirationDate: Date) {
-        let timeRemaining = expirationDate.timeIntervalSinceNow
-        let hoursRemaining = Int(timeRemaining / 3600)
-        let minutesRemaining = Int((timeRemaining.truncatingRemainder(dividingBy: 3600)) / 60)
-        
-        let timeString = hoursRemaining > 0 ? "\(hoursRemaining)h \(minutesRemaining)m" : "\(minutesRemaining)m"
-        
-        sendSystemNotification(
-            title: "File Expiring Soon",
-            body: "'\(fileURL.lastPathComponent)' will expire in \(timeString).",
-            fileURL: fileURL
-        )
-    }
-    
-    private func sendSystemNotification(title: String, body: String, fileURL: URL) {
-        // Use osascript to send system notifications
-        let script = """
-        display notification "\(body)" with title "\(title)"
-        """
-        
-        let task = Process()
-        task.launchPath = "/usr/bin/osascript"
-        task.arguments = ["-e", script]
-        task.launch()
-    }
-    
-    private func showExpiredFileDialog(fileURL: URL, expirationDate: Date) {
-        let alert = NSAlert()
-        alert.messageText = "File Expired"
-        alert.informativeText = "'\(fileURL.lastPathComponent)' expired on \(DateFormatter.localizedString(from: expirationDate, dateStyle: .medium, timeStyle: .short)). What would you like to do?"
-        alert.addButton(withTitle: "Delete File")
-        alert.addButton(withTitle: "Extend Expiration")
-        alert.addButton(withTitle: "Remove Expiration")
-        alert.addButton(withTitle: "Keep for Now")
-        
-        let response = alert.runModal()
-        
-        switch response.rawValue {
-        case 1000: // First button - Delete File
-            deleteFile(fileURL)
-        case 1001: // Second button - Extend Expiration
-            extendExpiration(for: fileURL)
-        case 1002: // Third button - Remove Expiration
-            removeExpiration(for: fileURL)
-        default:
-            break
-        }
-    }
-    
-    private func deleteFile(_ fileURL: URL) {
-        do {
-            try FileManager.default.removeItem(at: fileURL)
-            print("Deleted expired file: \(fileURL.lastPathComponent)")
-        } catch {
-            print("Failed to delete file \(fileURL.lastPathComponent): \(error)")
-        }
-    }
-    
-    private func extendExpiration(for fileURL: URL) {
-        let alert = NSAlert()
-        alert.messageText = "Extend Expiration"
-        alert.informativeText = "How long should '\(fileURL.lastPathComponent)' be kept?"
-        alert.addButton(withTitle: "1 Day")
-        alert.addButton(withTitle: "1 Week")
-        alert.addButton(withTitle: "1 Month")
-        alert.addButton(withTitle: "Cancel")
-        
-        let response = alert.runModal()
-        
-        let newExpirationDate: Date?
-        switch response.rawValue {
-        case 1000: // First button - 1 Day
-            newExpirationDate = Calendar.current.date(byAdding: .day, value: 1, to: Date())
-        case 1001: // Second button - 1 Week
-            newExpirationDate = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: Date())
-        case 1002: // Third button - 1 Month
-            newExpirationDate = Calendar.current.date(byAdding: .month, value: 1, to: Date())
-        default:
-            newExpirationDate = nil
-        }
-        
-        if let newExpirationDate = newExpirationDate {
-            let success = metadataManager.setExpirationDate(for: fileURL, expirationDate: newExpirationDate)
-            if success {
-                print("Extended expiration for \(fileURL.lastPathComponent) to \(newExpirationDate)")
-            }
-        }
-    }
-    
-    private func removeExpiration(for fileURL: URL) {
-        let success = metadataManager.removeExpirationDate(for: fileURL)
-        if success {
-            print("Removed expiration date for \(fileURL.lastPathComponent)")
-        }
-    }
-}
-
-// MARK: - Main Application
-class ExpireFilesApp: NSObject, NSApplicationDelegate {
-    private var fileMonitor: FileMonitor?
-    private var expirationChecker: ExpirationChecker?
-    
-    func applicationDidFinishLaunching(_ aNotification: Notification) {
-        print("Expire Files app started successfully!")
-        print("Monitoring Downloads folder for new files...")
-        
-        // Initialize file monitoring
-        setupFileMonitoring()
-        
-        // Start expiration checking
-        setupExpirationChecking()
-    }
-    
-    private func setupFileMonitoring() {
-        fileMonitor = FileMonitor()
-        fileMonitor?.startMonitoring()
-    }
-    
-    private func setupExpirationChecking() {
-        expirationChecker = ExpirationChecker()
-        expirationChecker?.startPeriodicChecking()
-    }
-    
-    func applicationWillTerminate(_ aNotification: Notification) {
-        fileMonitor?.stopMonitoring()
-        expirationChecker?.stopPeriodicChecking()
-    }
-    
-    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
-        return true
-    }
 }
 
 // MARK: - Main Entry Point
+print("=== ExpireFiles App Starting ===")
+print("=== This should definitely appear ===")
 let app = NSApplication.shared
-let delegate = ExpireFilesApp()
-app.delegate = delegate
+print("NSApplication created")
+let menuBarApp = MenuBarApp()
+print("MenuBarApp created")
+
+// Keep the app running
+print("Starting app.run()")
 app.run()
