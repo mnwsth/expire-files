@@ -1,82 +1,18 @@
 import Foundation
-#if os(macOS)
 import Cocoa
 import Darwin
-#endif
-
-#if os(macOS)
-// MARK: - Menu Bar App
-class MenuBarApp: NSObject {
-    private var statusItem: NSStatusItem?
-    private var popover: NSPopover?
-    private var appState: AppState?
-    
-    override init() {
-        super.init()
-        setupAppState()
-        setupMenuBar()
-    }
-    
-    private func setupMenuBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        
-        if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "Expire Files")
-            button.action = #selector(togglePopover)
-            button.target = self
-        }
-        
-        setupPopover()
-    }
-    
-    private func setupPopover() {
-        print("Setting up popover")
-        popover = NSPopover()
-        let viewController = MenuBarViewController()
-        popover?.contentViewController = viewController
-        popover?.behavior = .transient
-        print("Popover setup complete")
-    }
-    
-    private func setupAppState() {
-        appState = AppState()
-        // Update the popover's view controller with the app state
-        if let viewController = popover?.contentViewController as? MenuBarViewController {
-            viewController.setAppState(appState!)
-        }
-    }
-    
-    @objc private func togglePopover() {
-        print("Toggle popover called")
-        if let popover = popover {
-            print("Popover exists, isShown: \(popover.isShown)")
-            if popover.isShown {
-                popover.performClose(nil)
-            } else {
-                // Update the view controller with current app state before showing
-                if let viewController = popover.contentViewController as? MenuBarViewController,
-                   let appState = appState {
-                    print("Updating view controller with app state")
-                    viewController.setAppState(appState)
-                }
-                
-                if let button = statusItem?.button {
-                    print("Showing popover")
-                    popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-                } else {
-                    print("No button found")
-                }
-            }
-        } else {
-            print("No popover found")
-        }
-    }
-}
-#endif
 
 // MARK: - App State
 class AppState {
-    var watchedFolders: [WatchedFolder] = []
+    var onStateChange: (() -> Void)?
+
+    var watchedFolders: [WatchedFolder] = [] {
+        didSet {
+            watchedFolders.sort { $0.name.lowercased() < $1.name.lowercased() }
+            onStateChange?()
+        }
+    }
+    
     var expiringFiles: [ExpiringFile] = []
     
     private var fileMonitors: [URL: FileMonitor] = [:]
@@ -133,6 +69,8 @@ class AppState {
     }
     
     func addWatchedFolder(_ url: URL) {
+        guard !watchedFolders.contains(where: { $0.url == url }) else { return }
+        
         let folder = WatchedFolder(url: url, name: url.lastPathComponent)
         watchedFolders.append(folder)
         startMonitoringFolder(url)
@@ -381,25 +319,23 @@ class MetadataManager {
 }
 
 // MARK: - Main Entry Point
+class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItemController: StatusItemController?
+    private var appState: AppState!
+
+    func applicationDidFinishLaunching(_ aNotification: Notification) {
+        print("Application finished launching")
+        appState = AppState()
+        statusItemController = StatusItemController(appState: appState)
+    }
+
+    func applicationWillTerminate(_ aNotification: Notification) {
+        // Insert code here to tear down your application
+    }
+}
+
+
 print("=== ExpireFiles App Starting ===")
-print("=== This should definitely appear ===")
-
-#if os(macOS)
-let app = NSApplication.shared
-print("NSApplication created")
-let menuBarApp = MenuBarApp()
-print("MenuBarApp created")
-
-// Keep the app running
-print("Starting app.run()")
-app.run()
-#else
-// For non-macOS platforms, provide basic functionality
-print("Running on non-macOS platform")
-let appState = AppState()
-print("AppState created for file monitoring")
-
-// Keep the app running with a simple run loop
-print("Starting basic monitoring...")
-RunLoop.main.run()
-#endif
+let delegate = AppDelegate()
+NSApplication.shared.delegate = delegate
+NSApplication.shared.run()

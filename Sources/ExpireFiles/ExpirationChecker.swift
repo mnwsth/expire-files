@@ -87,35 +87,7 @@ class ExpirationChecker {
     }
     
     private func sendSystemNotification(title: String, body: String, fileURL: URL) {
-        #if os(macOS)
-        // Try modern UserNotifications first, fallback to osascript if it fails
-        if #available(macOS 10.14, *) {
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
-            content.sound = .default
-            
-            let request = UNNotificationRequest(
-                identifier: "expire-files-\(fileURL.lastPathComponent)-\(Date().timeIntervalSince1970)",
-                content: content,
-                trigger: nil
-            )
-            
-            UNUserNotificationCenter.current().add(request) { error in
-                if let error = error {
-                    print("Failed to send notification: \(error)")
-                    // Fallback to osascript
-                    self.sendNotificationViaOSAScript(title: title, body: body)
-                }
-            }
-        } else {
-            // Fallback for older macOS versions
-            sendNotificationViaOSAScript(title: title, body: body)
-        }
-        #else
-        // For non-macOS platforms, just print to console
-        print("NOTIFICATION: \(title) - \(body)")
-        #endif
+        sendNotificationViaOSAScript(title: title, body: body)
     }
     
     private func sendNotificationViaOSAScript(title: String, body: String) {

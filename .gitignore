@@ -169,5 +169,6 @@ node_modules/
 *.app
 
 # Project specific
+ExpireFiles.app
 # Keep the run.sh script but ignore any generated executables
 # The .build directory is already covered above

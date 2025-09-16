@@ -91,8 +91,10 @@ class FileMonitor {
     }
     
     private func startPollingMonitoring() {
+        #if !os(macOS)
         pollingTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             self?.processNewFiles()
         }
+        #endif
     }
 }

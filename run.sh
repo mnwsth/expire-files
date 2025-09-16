@@ -6,22 +6,18 @@
 echo "Expire Files - macOS File Expiration Manager"
 echo "============================================="
 
-# Check if already compiled
-if [ ! -f ".build/release/ExpireFiles" ]; then
-    echo "Compiling Expire Files..."
-    swift build -c release
-    if [ $? -ne 0 ]; then
-        echo "Compilation failed!"
-        exit 1
-    fi
-    echo "Compilation successful!"
+echo "Compiling Expire Files in debug mode..."
+swift build
+if [ $? -ne 0 ]; then
+    echo "Compilation failed!"
+    exit 1
 fi
+echo "Compilation successful!"
 
-echo "Starting Expire Files..."
+echo "Starting Expire Files (debug mode)..."
 echo "The app will monitor your Downloads folder for new files."
 echo "Press Ctrl+C to stop the application."
 echo ""
 
 # Run the application
-echo "Starting Expire Files (fixed version)..."
-.build/release/ExpireFiles
+.build/debug/ExpireFiles
