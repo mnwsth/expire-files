@@ -1,8 +1,14 @@
 import Foundation
+#if os(macOS)
 import Cocoa
+#endif
 
 class FileMonitor {
+    #if os(macOS)
     private var fileSystemSource: DispatchSourceFileSystemObject?
+    #else
+    private var pollingTimer: Timer?
+    #endif
     private let folderURL: URL
     private let metadataManager = MetadataManager.shared
     private let onNewFilesDetected: ([URL]) -> Void
@@ -13,6 +19,7 @@ class FileMonitor {
     }
     
     func startMonitoring() {
+        #if os(macOS)
         let fileDescriptor = open(folderURL.path, O_EVTONLY)
         guard fileDescriptor != -1 else {
             print("Failed to open folder for monitoring: \(folderURL.path)")
@@ -35,11 +42,21 @@ class FileMonitor {
         
         fileSystemSource?.resume()
         print("Started monitoring folder: \(folderURL.path)")
+        #else
+        // For non-macOS platforms, use polling approach
+        print("Started polling-based monitoring for folder: \(folderURL.path)")
+        startPollingMonitoring()
+        #endif
     }
     
     func stopMonitoring() {
+        #if os(macOS)
         fileSystemSource?.cancel()
         fileSystemSource = nil
+        #else
+        pollingTimer?.invalidate()
+        pollingTimer = nil
+        #endif
         print("Stopped monitoring folder: \(folderURL.path)")
     }
     
@@ -70,6 +87,12 @@ class FileMonitor {
             }
         } catch {
             print("Error processing new files in \(folderURL.path): \(error)")
+        }
+    }
+    
+    private func startPollingMonitoring() {
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.processNewFiles()
         }
     }
 }

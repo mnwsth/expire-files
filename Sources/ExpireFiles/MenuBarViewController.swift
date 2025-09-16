@@ -1,3 +1,4 @@
+#if os(macOS)
 import Cocoa
 
 class MenuBarViewController: NSViewController {
@@ -412,3 +413,4 @@ class MenuBarViewController: NSViewController {
         NSApplication.shared.terminate(nil)
     }
 }
+#endif

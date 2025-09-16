@@ -1,6 +1,8 @@
 import Foundation
+#if os(macOS)
 import Cocoa
 import UserNotifications
+#endif
 
 class ExpirationChecker {
     private var timer: Timer?
@@ -85,6 +87,7 @@ class ExpirationChecker {
     }
     
     private func sendSystemNotification(title: String, body: String, fileURL: URL) {
+        #if os(macOS)
         // Try modern UserNotifications first, fallback to osascript if it fails
         if #available(macOS 10.14, *) {
             let content = UNMutableNotificationContent()
@@ -109,16 +112,25 @@ class ExpirationChecker {
             // Fallback for older macOS versions
             sendNotificationViaOSAScript(title: title, body: body)
         }
+        #else
+        // For non-macOS platforms, just print to console
+        print("NOTIFICATION: \(title) - \(body)")
+        #endif
     }
     
     private func sendNotificationViaOSAScript(title: String, body: String) {
+        #if os(macOS)
         let script = """
         display notification "\(body)" with title "\(title)"
         """
         
         let task = Process()
-        task.launchPath = "/usr/bin/osascript"
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         task.arguments = ["-e", script]
-        task.launch()
+        try? task.run()
+        #else
+        // For non-macOS platforms, just print to console
+        print("OSASCRIPT NOTIFICATION: \(title) - \(body)")
+        #endif
     }
 }

@@ -1,6 +1,10 @@
 import Foundation
+#if os(macOS)
 import Cocoa
+import Darwin
+#endif
 
+#if os(macOS)
 // MARK: - Menu Bar App
 class MenuBarApp: NSObject {
     private var statusItem: NSStatusItem?
@@ -68,11 +72,12 @@ class MenuBarApp: NSObject {
         }
     }
 }
+#endif
 
 // MARK: - App State
-class AppState: ObservableObject {
-    @Published var watchedFolders: [WatchedFolder] = []
-    @Published var expiringFiles: [ExpiringFile] = []
+class AppState {
+    var watchedFolders: [WatchedFolder] = []
+    var expiringFiles: [ExpiringFile] = []
     
     private var fileMonitors: [URL: FileMonitor] = [:]
     private var expirationChecker: ExpirationChecker?
@@ -174,9 +179,9 @@ class AppState: ObservableObject {
         """
         
         let task = Process()
-        task.launchPath = "/usr/bin/osascript"
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         task.arguments = ["-e", script]
-        task.launch()
+        try? task.run()
     }
     
     func getTopExpiringFiles(for folderURL: URL, limit: Int = 5) -> [ExpiringFile] {
@@ -281,16 +286,21 @@ class MetadataManager {
     
     func setExpirationDate(for fileURL: URL, expirationDate: Date) -> Bool {
         let dateString = ISO8601DateFormatter().string(from: expirationDate)
-        let data = dateString.data(using: .utf8)!
         
+        #if os(macOS)
+        let data = dateString.data(using: .utf8)!
         let result = data.withUnsafeBytes { bytes in
             setxattr(fileURL.path, expirationAttributeKey, bytes.baseAddress, data.count, 0, 0)
         }
-        
         return result == 0
+        #else
+        // Fallback: store in a separate metadata file for non-macOS platforms
+        return storeMetadataInFile(for: fileURL, dateString: dateString)
+        #endif
     }
     
     func getExpirationDate(for fileURL: URL) -> Date? {
+        #if os(macOS)
         let bufferSize = 1024
         let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: bufferSize)
         defer { buffer.deallocate() }
@@ -303,23 +313,78 @@ class MetadataManager {
                 return ISO8601DateFormatter().date(from: dateString)
             }
         }
-        
         return nil
+        #else
+        // Fallback: read from metadata file
+        return getMetadataFromFile(for: fileURL)
+        #endif
     }
     
     func removeExpirationDate(for fileURL: URL) -> Bool {
+        #if os(macOS)
         let result = removexattr(fileURL.path, expirationAttributeKey, 0)
         return result == 0
+        #else
+        // Fallback: remove metadata file
+        return removeMetadataFile(for: fileURL)
+        #endif
     }
     
     func hasExpirationDate(for fileURL: URL) -> Bool {
         return getExpirationDate(for: fileURL) != nil
     }
+    
+    // MARK: - Fallback metadata storage for platforms without extended attributes
+    #if !os(macOS)
+    private func getMetadataFilePath(for fileURL: URL) -> URL {
+        let metadataDir = fileURL.deletingLastPathComponent().appendingPathComponent(".expire-metadata")
+        let fileName = fileURL.lastPathComponent + ".expiration"
+        return metadataDir.appendingPathComponent(fileName)
+    }
+    
+    private func storeMetadataInFile(for fileURL: URL, dateString: String) -> Bool {
+        let metadataFileURL = getMetadataFilePath(for: fileURL)
+        let metadataDir = metadataFileURL.deletingLastPathComponent()
+        
+        do {
+            try FileManager.default.createDirectory(at: metadataDir, withIntermediateDirectories: true)
+            try dateString.write(to: metadataFileURL, atomically: true, encoding: .utf8)
+            return true
+        } catch {
+            print("Failed to store metadata in file: \(error)")
+            return false
+        }
+    }
+    
+    private func getMetadataFromFile(for fileURL: URL) -> Date? {
+        let metadataFileURL = getMetadataFilePath(for: fileURL)
+        
+        do {
+            let dateString = try String(contentsOf: metadataFileURL, encoding: .utf8)
+            return ISO8601DateFormatter().date(from: dateString)
+        } catch {
+            return nil
+        }
+    }
+    
+    private func removeMetadataFile(for fileURL: URL) -> Bool {
+        let metadataFileURL = getMetadataFilePath(for: fileURL)
+        
+        do {
+            try FileManager.default.removeItem(at: metadataFileURL)
+            return true
+        } catch {
+            return false
+        }
+    }
+    #endif
 }
 
 // MARK: - Main Entry Point
 print("=== ExpireFiles App Starting ===")
 print("=== This should definitely appear ===")
+
+#if os(macOS)
 let app = NSApplication.shared
 print("NSApplication created")
 let menuBarApp = MenuBarApp()
@@ -328,3 +393,13 @@ print("MenuBarApp created")
 // Keep the app running
 print("Starting app.run()")
 app.run()
+#else
+// For non-macOS platforms, provide basic functionality
+print("Running on non-macOS platform")
+let appState = AppState()
+print("AppState created for file monitoring")
+
+// Keep the app running with a simple run loop
+print("Starting basic monitoring...")
+RunLoop.main.run()
+#endif
