@@ -5,7 +5,7 @@ import Cocoa
 class MetadataManager {
     static let shared = MetadataManager()
     
-    private let expirationAttributeKey = "com.amuselabs.expirefiles.expiration"
+    private let expirationAttributeKey = "com.expirefiles.metadata.expiration"
     
     private init() {}
     

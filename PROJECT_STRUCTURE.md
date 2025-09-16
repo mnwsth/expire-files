@@ -33,7 +33,7 @@ expire-files/
 
 ### **Quick Start:**
 ```bash
-cd /Users/manuawasthi/AmuseLabs/expire-files
+cd /path/to/expire-files
 ./run.sh
 ```
 

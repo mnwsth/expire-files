@@ -91,7 +91,7 @@ The app will notify you when:
 
 Expiration dates are stored as extended attributes using the key:
 ```
-com.amuselabs.expirefiles.expiration
+com.expirefiles.metadata.expiration
 ```
 
 The date is stored in ISO8601 format for reliability and portability.
