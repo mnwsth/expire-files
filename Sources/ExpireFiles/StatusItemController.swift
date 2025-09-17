@@ -4,6 +4,7 @@ class StatusItemController: NSObject {
     private var statusItem: NSStatusItem
     private var popover: NSPopover
     private var appState: AppState
+    private var menu: NSMenu!
 
     init(appState: AppState) {
         self.appState = appState
@@ -14,13 +15,36 @@ class StatusItemController: NSObject {
 
         setupStatusItem()
         setupPopover()
+        setupMenu()
+    }
+
+    private func setupMenu() {
+        menu = NSMenu()
+        let quitMenuItem = NSMenuItem(title: "Quit ExpireFiles", action: #selector(quitApp), keyEquivalent: "q")
+        quitMenuItem.target = self
+        menu.addItem(quitMenuItem)
+    }
+
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(self)
     }
 
     private func setupStatusItem() {
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "doc.text.magnifyingglass", accessibilityDescription: "Expire Files")
-            button.action = #selector(togglePopover)
+            button.action = #selector(statusItemClicked)
             button.target = self
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+    }
+
+    @objc private func statusItemClicked() {
+        if let event = NSApp.currentEvent, event.type == .rightMouseUp || event.modifierFlags.contains(.control) {
+            statusItem.menu = menu
+            statusItem.button?.performClick(nil)
+            statusItem.menu = nil
+        } else {
+            togglePopover()
         }
     }
 

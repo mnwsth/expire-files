@@ -4,6 +4,7 @@ class FileListViewController: NSViewController {
     private var appState: AppState
     private var scrollView: NSScrollView!
     private var stackView: NSStackView!
+    private var spinner: NSProgressIndicator!
 
     init(appState: AppState) {
         self.appState = appState
@@ -43,6 +44,14 @@ class FileListViewController: NSViewController {
         
         scrollView.documentView = stackView
 
+        spinner = NSProgressIndicator()
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.style = .spinning
+        spinner.controlSize = .regular
+        spinner.isIndeterminate = true
+        view.addSubview(spinner)
+        spinner.isHidden = true
+
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.topAnchor, constant: 10),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
@@ -51,16 +60,23 @@ class FileListViewController: NSViewController {
             
             stackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            stackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor)
+            stackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+
+            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor)
         ])
     }
 
     private func updateFileList() {
         stackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        spinner.isHidden = false
+        spinner.startAnimation(nil)
 
         guard let folder = appState.watchedFolders.first else {
             let label = NSTextField(labelWithString: "No folder is being watched.")
             stackView.addArrangedSubview(label)
+            spinner.stopAnimation(nil)
+            spinner.isHidden = true
             return
         }
         
@@ -68,40 +84,47 @@ class FileListViewController: NSViewController {
         folderNameLabel.font = NSFont.boldSystemFont(ofSize: 14)
         stackView.addArrangedSubview(folderNameLabel)
 
-        let files = appState.getAllFilesInFolder(folder.url)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let files = self.appState.getAllFilesInFolder(folder.url)
 
-        let sortedFiles = files.map { fileURL -> (URL, Date?) in
-            let expirationDate = MetadataManager.shared.getExpirationDate(for: fileURL)
-            return (fileURL, expirationDate)
-        }.sorted { file1, file2 in
-            let (_, date1) = file1
-            let (_, date2) = file2
+            let sortedFiles = files.map { fileURL -> (URL, Date?) in
+                let expirationDate = MetadataManager.shared.getExpirationDate(for: fileURL)
+                return (fileURL, expirationDate)
+            }.sorted { file1, file2 in
+                let (_, date1) = file1
+                let (_, date2) = file2
 
-            if let date1 = date1, let date2 = date2 {
-                return date1 < date2 // Both have dates, sort by date
-            } else if date1 != nil {
-                return true // Only file1 has a date, it comes first
-            } else if date2 != nil {
-                return false // Only file2 has a date, it comes first
-            } else {
-                // Neither have dates, sort alphabetically
-                return file1.0.lastPathComponent.localizedCompare(file2.0.lastPathComponent) == .orderedAscending
+                if let date1 = date1, let date2 = date2 {
+                    return date1 < date2 // Both have dates, sort by date
+                } else if date1 != nil {
+                    return true // Only file1 has a date, it comes first
+                } else if date2 != nil {
+                    return false // Only file2 has a date, it comes first
+                } else {
+                    // Neither have dates, sort alphabetically
+                    return file1.0.lastPathComponent.localizedCompare(file2.0.lastPathComponent) == .orderedAscending
+                }
             }
-        }
-        
-        if sortedFiles.isEmpty {
-            let label = NSTextField(labelWithString: "Folder is empty.")
-            stackView.addArrangedSubview(label)
-        } else {
-            for (fileURL, _) in sortedFiles {
-                let fileView = createFileEntryView(for: fileURL)
-                stackView.addArrangedSubview(fileView)
-            }
-        }
-        
-        DispatchQueue.main.async {
-            if let firstView = self.stackView.arrangedSubviews.first {
-                self.scrollView.documentView?.scrollToVisible(firstView.frame)
+            
+            DispatchQueue.main.async {
+                self.spinner.stopAnimation(nil)
+                self.spinner.isHidden = true
+                
+                if sortedFiles.isEmpty {
+                    let label = NSTextField(labelWithString: "Folder is empty.")
+                    self.stackView.addArrangedSubview(label)
+                } else {
+                    for (fileURL, _) in sortedFiles {
+                        let fileView = self.createFileEntryView(for: fileURL)
+                        self.stackView.addArrangedSubview(fileView)
+                    }
+                }
+                
+                DispatchQueue.main.async {
+                    if let firstView = self.stackView.arrangedSubviews.first {
+                        self.scrollView.documentView?.scrollToVisible(firstView.frame)
+                    }
+                }
             }
         }
     }
