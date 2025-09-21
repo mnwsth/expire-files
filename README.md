@@ -1,11 +1,11 @@
 # Expire Files
 
-A macOS menu bar application that helps you keep your Downloads folder organized by managing expiration dates for your files.
+A macOS menu bar application that helps you keep designated folders (like Downloads) organized by managing expiration dates for your files.
 
 ## Features
 
 - **Menu Bar App**: Runs discreetly in your menu bar for easy access.
-- **Automatic File Monitoring**: Monitors your Downloads folder for new files.
+- **Automatic File Monitoring**: Monitors user-specified folders for new files.
 - **Custom Expiration Dates**: Right-click on a file in the list to set or remove an expiration date.
 - **Smart Notifications**: Get notified when files are about to expire or have expired.
 - **Visual Cues**: Expired files are highlighted in red.
@@ -14,7 +14,7 @@ A macOS menu bar application that helps you keep your Downloads folder organized
 
 ## How It Works
 
-1. **File Detection**: The app monitors your Downloads folder using macOS File System Events.
+1. **File Detection**: The app monitors the folders you select using macOS File System Events.
 2. **Set Expiration**: Right-click a file in the menu bar popover to set an expiration date using a date picker.
 3. **Background Monitoring**: The app periodically checks for files nearing expiration.
 4. **User Notifications**: You receive notifications for files that need attention.
@@ -53,7 +53,7 @@ A macOS menu bar application that helps you keep your Downloads folder organized
 1. Launch the app using `./run.sh`.
 2. A new icon will appear in your macOS menu bar.
 3. Grant necessary permissions when prompted:
-   - Downloads folder access
+   - Folder access
    - Notification permissions
 
 ### Setting Expiration Dates

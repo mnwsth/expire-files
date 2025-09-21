@@ -10,23 +10,26 @@ expire-files/
 ├── PROJECT_STRUCTURE.md       # This file
 └── Sources/
     └── ExpireFiles/
-        ├── main.swift                 # App entry point and delegate
-        ├── AppState.swift             # Core application state management
+        ├── main.swift                 # App entry point, delegate, AppState, and core models
         ├── SettingsManager.swift      # Handles loading/saving settings
         ├── FileMonitor.swift          # Monitors folders for new files
         ├── ExpirationChecker.swift    # Checks for expiring files
+        ├── NotificationManager.swift  # Manages user notifications
         ├── StatusItemController.swift # Manages the menu bar item and popover
-        ├── FileListViewController.swift # Displays the list of files
+        ├── FolderListViewController.swift # UI for managing watched folders
+        ├── FileListViewController.swift # Displays the list of files for a folder
         └── ExpirationDatePickerViewController.swift # UI for setting dates
 ```
 
 ## 🎯 **What's Included**
 
-- **main.swift**: Main application entry point, sets up the app delegate.
+- **main.swift**: Main application entry point. Contains `AppDelegate`, the central `AppState` class, data models (`WatchedFolder`, `ExpiringFile`), and the `MetadataManager` for handling extended file attributes.
 - **StatusItemController.swift**: Manages the macOS status bar item and its popover.
-- **FileListViewController.swift**: A view controller that displays the list of watched files, handles sorting, and context menus.
+- **FolderListViewController.swift**: A view controller that displays the list of watched folders and allows adding new folders.
+- **FileListViewController.swift**: A view controller that displays the list of watched files within a selected folder, handles sorting, and context menus.
 - **ExpirationDatePickerViewController.swift**: A view controller for the date picker UI.
-- **Core Logic**: `AppState`, `FileMonitor`, `ExpirationChecker`, and `SettingsManager` handle the core application logic.
+- **NotificationManager.swift**: Handles scheduling and delivery of user notifications.
+- **Core Logic**: `FileMonitor`, `ExpirationChecker`, and `SettingsManager` handle file system interactions, expiration checks, and settings persistence.
 - **run.sh**: An easy-to-use script to compile and run the application.
 - **README.md**: Updated documentation reflecting the GUI application.
 
