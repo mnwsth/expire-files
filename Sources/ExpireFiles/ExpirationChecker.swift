@@ -8,16 +8,23 @@ class ExpirationChecker {
     private var timer: Timer?
     private let metadataManager = MetadataManager.shared
     private let checkInterval: TimeInterval = 3600 // Check every hour
+    private weak var appState: AppState?
     private let onExpiringFilesFound: ([ExpiringFile]) -> Void
     
-    init(onExpiringFilesFound: @escaping ([ExpiringFile]) -> Void = { _ in }) {
+    init(appState: AppState, onExpiringFilesFound: @escaping ([ExpiringFile]) -> Void = { _ in }) {
+        self.appState = appState
         self.onExpiringFilesFound = onExpiringFilesFound
     }
     
     func startPeriodicChecking() {
-        checkForExpiringFiles()
+        // Delay the initial check slightly to allow notification permissions to be granted
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            print("Performing initial check for expiring files...")
+            self?.checkForExpiringFiles()
+        }
         
         timer = Timer.scheduledTimer(withTimeInterval: checkInterval, repeats: true) { [weak self] _ in
+            print("Performing periodic check for expiring files...")
             self?.checkForExpiringFiles()
         }
         
@@ -30,25 +37,39 @@ class ExpirationChecker {
         print("Stopped periodic expiration checking")
     }
     
-    private func checkForExpiringFiles() {
-        let allExpiringFiles = getAllExpiringFiles()
-        onExpiringFilesFound(allExpiringFiles)
-        
-        // Handle notifications for files expiring soon or expired
-        for file in allExpiringFiles {
-            if file.isExpired {
-                handleExpiredFile(file)
-            } else if file.isExpiringSoon {
-                handleFileAboutToExpire(file)
+    func checkForExpiringFiles() {
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let self = self else { return }
+            
+            let allExpiringFiles = self.getAllExpiringFiles()
+            self.onExpiringFilesFound(allExpiringFiles)
+            
+            print("Found \(allExpiringFiles.count) files with expiration dates.")
+            
+            let expiredFiles = allExpiringFiles.filter { $0.isExpired }
+            if !expiredFiles.isEmpty {
+                print("Found \(expiredFiles.count) expired files.")
+            }
+            
+            // Handle notifications for files expiring soon or expired
+            for file in allExpiringFiles {
+                if file.isExpired {
+                    self.handleExpiredFile(file)
+                } else if file.isExpiringSoon {
+                    self.handleFileAboutToExpire(file)
+                }
             }
         }
     }
     
     private func getAllExpiringFiles() -> [ExpiringFile] {
-        // Get all files with expiration dates from all watched folders
-        // This is a simplified version - in a real app, you'd track watched folders
-        let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-        return getExpiringFilesFromFolder(downloadsURL)
+        guard let watchedFolders = appState?.watchedFolders else { return [] }
+        
+        var allFiles: [ExpiringFile] = []
+        for folder in watchedFolders {
+            allFiles.append(contentsOf: getExpiringFilesFromFolder(folder.url))
+        }
+        return allFiles
     }
     
     private func getExpiringFilesFromFolder(_ folderURL: URL) -> [ExpiringFile] {
@@ -71,7 +92,7 @@ class ExpirationChecker {
     }
     
     private func handleExpiredFile(_ file: ExpiringFile) {
-        sendSystemNotification(
+        NotificationManager.shared.sendNotification(
             title: "File Expired",
             body: "'\(file.fileName)' has expired and should be deleted.",
             fileURL: file.fileURL
@@ -79,30 +100,10 @@ class ExpirationChecker {
     }
     
     private func handleFileAboutToExpire(_ file: ExpiringFile) {
-        sendSystemNotification(
+        NotificationManager.shared.sendNotification(
             title: "File Expiring Soon",
             body: "'\(file.fileName)' will expire in \(file.timeRemainingString).",
             fileURL: file.fileURL
         )
-    }
-    
-    private func sendSystemNotification(title: String, body: String, fileURL: URL) {
-        sendNotificationViaOSAScript(title: title, body: body)
-    }
-    
-    private func sendNotificationViaOSAScript(title: String, body: String) {
-        #if os(macOS)
-        let script = """
-        display notification "\(body)" with title "\(title)"
-        """
-        
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", script]
-        try? task.run()
-        #else
-        // For non-macOS platforms, just print to console
-        print("OSASCRIPT NOTIFICATION: \(title) - \(body)")
-        #endif
     }
 }

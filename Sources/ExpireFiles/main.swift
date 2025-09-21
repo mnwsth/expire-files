@@ -25,9 +25,9 @@ class AppState {
         print("Loaded \(watchedFolders.count) watched folders")
         // Add Downloads folder by default if no folders are being watched
         if watchedFolders.isEmpty {
-            print("Adding Downloads folder by default")
-            let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-            addWatchedFolder(downloadsURL)
+            // print("Adding Downloads folder by default")
+            // let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+            // addWatchedFolder(downloadsURL)
         }
         startMonitoring()
         print("AppState init complete")
@@ -48,7 +48,7 @@ class AppState {
         }
         
         // Start expiration checking
-        expirationChecker = ExpirationChecker { [weak self] expiringFiles in
+        expirationChecker = ExpirationChecker(appState: self) { [weak self] expiringFiles in
             DispatchQueue.main.async {
                 self?.expiringFiles = expiringFiles
             }
@@ -75,6 +75,7 @@ class AppState {
         watchedFolders.append(folder)
         startMonitoringFolder(url)
         saveSettings()
+        expirationChecker?.checkForExpiringFiles()
     }
     
     func removeWatchedFolder(_ url: URL) {
@@ -107,19 +108,7 @@ class AppState {
     }
     
     private func showNewFileNotification(for fileURL: URL) {
-        sendNotification(title: "New File Detected", body: "A new file '\(fileURL.lastPathComponent)' was detected. Set an expiration date?")
-    }
-    
-    private func sendNotification(title: String, body: String) {
-        // Use osascript for reliable notifications
-        let script = """
-        display notification "\(body)" with title "\(title)"
-        """
-        
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", script]
-        try? task.run()
+        NotificationManager.shared.sendNotification(title: "New File Detected", body: "A new file '\(fileURL.lastPathComponent)' was detected. Set an expiration date?", fileURL: fileURL)
     }
     
     func getTopExpiringFiles(for folderURL: URL, limit: Int = 5) -> [ExpiringFile] {
@@ -325,6 +314,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         print("Application finished launching")
+        NotificationManager.shared.requestAuthorization()
         appState = AppState()
         statusItemController = StatusItemController(appState: appState)
     }

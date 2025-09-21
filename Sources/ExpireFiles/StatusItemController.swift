@@ -16,6 +16,13 @@ class StatusItemController: NSObject {
         setupStatusItem()
         setupPopover()
         setupMenu()
+        
+        // Add observer for app state changes
+        appState.onStateChange = { [weak self] in
+            DispatchQueue.main.async {
+                self?.setupPopover()
+            }
+        }
     }
 
     private func setupMenu() {
