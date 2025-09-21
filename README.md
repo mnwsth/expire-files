@@ -5,11 +5,16 @@ A macOS menu bar application that helps you keep designated folders (like Downlo
 ## Features
 
 - **Menu Bar App**: Runs discreetly in your menu bar for easy access.
+- **Monitor Multiple Folders**: Add any folder you want to monitor, not just Downloads.
+- **Persistent Folder List**: Your list of monitored folders is saved and will be remembered the next time you open the app.
 - **Automatic File Monitoring**: Monitors user-specified folders for new files.
 - **Custom Expiration Dates**: Right-click on a file in the list to set or remove an expiration date.
 - **Smart Notifications**: Get notified when files are about to expire or have expired.
+- **Clickable Notifications**: Click on a notification to reveal the relevant file in Finder.
 - **Visual Cues**: Expired files are highlighted in red.
 - **Sorted View**: Files are automatically sorted by their expiration date.
+- **Detailed File List**: See the exact expiration date and time for each file. Files without expiration dates are also listed, making it easy to set one.
+- **Background Operation**: The app runs in the background and checks for expiring files every hour.
 - **Native macOS Integration**: Uses extended attributes to store metadata.
 
 ## How It Works
@@ -62,6 +67,8 @@ Click the app's icon in the menu bar to see a list of files in your watched fold
 - Set an expiration date
 - Edit an existing expiration date
 - Remove an expiration date
+
+Right-click the menu bar icon itself for an option to quit the application.
 
 ### Managing Files
 
