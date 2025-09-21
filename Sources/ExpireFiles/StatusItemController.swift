@@ -1,6 +1,6 @@
 import Cocoa
 
-class StatusItemController: NSObject {
+class StatusItemController: NSObject, FolderListViewControllerDelegate {
     private var statusItem: NSStatusItem
     private var popover: NSPopover
     private var appState: AppState
@@ -20,7 +20,13 @@ class StatusItemController: NSObject {
         // Add observer for app state changes
         appState.onStateChange = { [weak self] in
             DispatchQueue.main.async {
-                self?.setupPopover()
+                // If the folder list is showing, it will update itself.
+                // If a file list is showing for a folder that's been removed, pop back to the folder list.
+                if let fileListVC = self?.popover.contentViewController as? FileListViewController {
+                    if !(self?.appState.watchedFolders.contains(where: { $0.url == fileListVC.folder.url }) ?? false) {
+                        self?.showFolderList()
+                    }
+                }
             }
         }
     }
@@ -56,9 +62,8 @@ class StatusItemController: NSObject {
     }
 
     private func setupPopover() {
-        let fileListViewController = FileListViewController(appState: appState)
-        popover.contentViewController = fileListViewController
         popover.behavior = .transient
+        showFolderList()
     }
 
     @objc private func togglePopover() {
@@ -68,6 +73,32 @@ class StatusItemController: NSObject {
             if let button = statusItem.button {
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                 NSApp.activate(ignoringOtherApps: true)
+            }
+        }
+    }
+    
+    private func showFolderList() {
+        let folderListVC = FolderListViewController(appState: appState)
+        folderListVC.delegate = self
+        popover.contentViewController = folderListVC
+    }
+    
+    func didSelectFolder(_ folder: WatchedFolder) {
+        let fileListVC = FileListViewController(appState: appState, folder: folder) { [weak self] in
+            self?.showFolderList()
+        }
+        popover.contentViewController = fileListVC
+    }
+    
+    func didClickAddFolder() {
+        let openPanel = NSOpenPanel()
+        openPanel.canChooseFiles = false
+        openPanel.canChooseDirectories = true
+        openPanel.allowsMultipleSelection = false
+
+        if openPanel.runModal() == .OK {
+            if let url = openPanel.url {
+                appState.addWatchedFolder(url)
             }
         }
     }

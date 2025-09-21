@@ -2,12 +2,22 @@ import Cocoa
 
 class FileListViewController: NSViewController {
     private var appState: AppState
+    let folder: WatchedFolder
+    private var onBack: () -> Void
+
     private var scrollView: NSScrollView!
     private var stackView: NSStackView!
     private var spinner: NSProgressIndicator!
 
-    init(appState: AppState) {
+    private struct FileInfo {
+        let url: URL
+        let expirationDate: Date?
+    }
+
+    init(appState: AppState, folder: WatchedFolder, onBack: @escaping () -> Void) {
         self.appState = appState
+        self.folder = folder
+        self.onBack = onBack
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -27,7 +37,6 @@ class FileListViewController: NSViewController {
     
     override func viewWillAppear() {
         super.viewWillAppear()
-        updateFileList()
     }
 
     private func setupViews() {
@@ -49,9 +58,10 @@ class FileListViewController: NSViewController {
         separator.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(separator)
 
-        let addButton = NSButton(title: "Add Folder...", target: self, action: #selector(addFolderClicked))
-        addButton.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(addButton)
+        let backButton = NSButton(title: "‹ Back to Folders", target: self, action: #selector(backClicked))
+        backButton.translatesAutoresizingMaskIntoConstraints = false
+        backButton.bezelStyle = .recessed
+        view.addSubview(backButton)
 
         spinner = NSProgressIndicator()
         spinner.translatesAutoresizingMaskIntoConstraints = false
@@ -67,12 +77,12 @@ class FileListViewController: NSViewController {
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
 
-            separator.bottomAnchor.constraint(equalTo: addButton.topAnchor, constant: -10),
+            separator.bottomAnchor.constraint(equalTo: backButton.topAnchor, constant: -10),
             separator.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
             separator.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
 
-            addButton.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
-            addButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            backButton.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
+            backButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             
             stackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
@@ -83,18 +93,8 @@ class FileListViewController: NSViewController {
         ])
     }
 
-    @objc private func addFolderClicked() {
-        let openPanel = NSOpenPanel()
-        openPanel.canChooseFiles = false
-        openPanel.canChooseDirectories = true
-        openPanel.allowsMultipleSelection = false
-
-        if openPanel.runModal() == .OK {
-            if let url = openPanel.url {
-                appState.addWatchedFolder(url)
-                updateFileList()
-            }
-        }
+    @objc private func backClicked() {
+        onBack()
     }
 
     private func updateFileList() {
@@ -111,59 +111,53 @@ class FileListViewController: NSViewController {
         }
 
         DispatchQueue.global(qos: .userInitiated).async {
-            var newSubviews: [NSView] = []
-
-            for folder in self.appState.watchedFolders {
-                let folderNameLabel = NSTextField(labelWithString: "Watching: \(folder.name)")
-                folderNameLabel.font = NSFont.boldSystemFont(ofSize: 14)
-                newSubviews.append(folderNameLabel)
-
-                let files = self.appState.getAllFilesInFolder(folder.url)
-
-                if files.isEmpty {
-                    let label = NSTextField(labelWithString: "Folder is empty.")
-                    label.textColor = .secondaryLabelColor
-                    newSubviews.append(label)
+            let files = self.appState.getAllFilesInFolder(self.folder.url)
+            let fileInfos = files.map { fileURL -> FileInfo in
+                let expirationDate = MetadataManager.shared.getExpirationDate(for: fileURL)
+                return FileInfo(url: fileURL, expirationDate: expirationDate)
+            }.sorted { file1, file2 in
+                if let date1 = file1.expirationDate, let date2 = file2.expirationDate {
+                    return date1 < date2 // Both have dates, sort by date
+                } else if file1.expirationDate != nil {
+                    return true // Only file1 has a date, it comes first
+                } else if file2.expirationDate != nil {
+                    return false // Only file2 has a date, it comes first
                 } else {
-                    let sortedFiles = files.map { fileURL -> (URL, Date?) in
-                        let expirationDate = MetadataManager.shared.getExpirationDate(for: fileURL)
-                        return (fileURL, expirationDate)
-                    }.sorted { file1, file2 in
-                        let (_, date1) = file1
-                        let (_, date2) = file2
-
-                        if let date1 = date1, let date2 = date2 {
-                            return date1 < date2
-                        } else if date1 != nil {
-                            return true
-                        } else if date2 != nil {
-                            return false
-                        } else {
-                            return file1.0.lastPathComponent.localizedCompare(file2.0.lastPathComponent) == .orderedAscending
-                        }
-                    }
-
-                    for (fileURL, _) in sortedFiles {
-                        let fileView = self.createFileEntryView(for: fileURL)
-                        newSubviews.append(fileView)
-                    }
+                    // Neither have dates, sort alphabetically
+                    return file1.url.lastPathComponent.localizedCompare(file2.url.lastPathComponent) == .orderedAscending
                 }
-
-                // Add a separator between folders
-                let separator = NSBox()
-                separator.boxType = .separator
-                newSubviews.append(separator)
-            }
-            
-            // Remove the last separator
-            if !newSubviews.isEmpty {
-                newSubviews.removeLast()
             }
 
             DispatchQueue.main.async {
                 self.spinner.stopAnimation(nil)
                 self.spinner.isHidden = true
-
+                
+                var newSubviews: [NSView] = []
+                
+                let folderHeaderView = NSStackView()
+                folderHeaderView.orientation = .horizontal
+                folderHeaderView.alignment = .firstBaseline
+                folderHeaderView.spacing = 8
+                
+                let folderNameLabel = NSTextField(labelWithString: "Folder: \(self.folder.name)")
+                folderNameLabel.font = NSFont.boldSystemFont(ofSize: 14)
+                folderNameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                
+                folderHeaderView.addArrangedSubview(folderNameLabel)
+                
+                newSubviews.append(folderHeaderView)
+                
+                if fileInfos.isEmpty {
+                    let label = NSTextField(labelWithString: "Folder is empty.")
+                    label.textColor = .secondaryLabelColor
+                    newSubviews.append(label)
+                } else {
+                    for fileInfo in fileInfos {
+                        let fileView = self.createFileEntryView(for: fileInfo.url, expirationDate: fileInfo.expirationDate)
+                        newSubviews.append(fileView)
+                    }
+                }
+                
                 for view in newSubviews {
                     self.stackView.addArrangedSubview(view)
                 }
@@ -175,7 +169,7 @@ class FileListViewController: NSViewController {
         }
     }
 
-    private func createFileEntryView(for fileURL: URL) -> NSView {
+    private func createFileEntryView(for fileURL: URL, expirationDate: Date?) -> NSView {
         let container = NSStackView()
         container.orientation = .vertical
         container.alignment = .leading
@@ -183,15 +177,13 @@ class FileListViewController: NSViewController {
         let fileNameLabel = NSTextField(labelWithString: fileURL.lastPathComponent)
         fileNameLabel.lineBreakMode = .byTruncatingTail
         
-        let existingDate = MetadataManager.shared.getExpirationDate(for: fileURL)
-
-        if let expirationDate = existingDate, expirationDate < Date() {
+        if let expirationDate = expirationDate, expirationDate < Date() {
             fileNameLabel.textColor = .systemRed
         }
         
         container.addArrangedSubview(fileNameLabel)
         
-        if let expirationDate = existingDate {
+        if let expirationDate = expirationDate {
             let formatter = DateFormatter()
             formatter.dateStyle = .short
             formatter.timeStyle = .short
@@ -203,12 +195,12 @@ class FileListViewController: NSViewController {
         }
         
         let menu = NSMenu()
-        let title = existingDate == nil ? "Set Expiration Date..." : "Edit Expiration Date..."
+        let title = expirationDate == nil ? "Set Expiration Date..." : "Edit Expiration Date..."
         let setExpirationMenuItem = NSMenuItem(title: title, action: #selector(setExpirationDateAction(_:)), keyEquivalent: "")
         setExpirationMenuItem.representedObject = fileURL
         menu.addItem(setExpirationMenuItem)
         
-        if existingDate != nil {
+        if expirationDate != nil {
             let removeExpirationMenuItem = NSMenuItem(title: "Remove Expiration", action: #selector(removeExpirationDateAction(_:)), keyEquivalent: "")
             removeExpirationMenuItem.representedObject = fileURL
             menu.addItem(removeExpirationMenuItem)
@@ -249,4 +241,8 @@ class FileListViewController: NSViewController {
             // TODO: Show an error alert
         }
     }
+}
+
+class FolderButton: NSButton {
+    var folderURL: URL?
 } 
